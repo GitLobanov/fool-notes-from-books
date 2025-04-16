@@ -528,50 +528,449 @@ server:
 
 ### Обнаружение служб
 
+###### Балансировщик нагрузки
+
 ![](_Res/tradition-load-balancer-example.png)
 
-Традиционная модель определения местоположения службы
-с использованием DNS и балансировщика нагрузки
+Традиционная модель определения местоположения службы с использованием DNS и балансировщика нагрузки
 
-Модель этого типа хорошо подходит для приложений, которые
-действуют внутри четырех стен корпоративного центра обработ-
-ки данных и имеют относительно небольшое количество служб,
-развернутых на нескольких статических серверах, но она непри-
-годна для облачных приложений на основе микросервисов по сле-
-дующим причинам:
+Модель этого типа хорошо подходит для приложений, которые действуют внутри четырех стен корпоративного центра обработки данных и имеют относительно небольшое количество служб, развернутых на нескольких статических серверах, но она непригодна для облачных приложений на основе микросервисов по следующим причинам:
 
-- даже притом что балансировщик нагрузки можно сделать высокодо-
-ступным, он образует единственную точку отказа для всей инфра-
-структуры. Если балансировщик нагрузки отключится, то вме-
-сте с ним отключатся все приложения, находящиеся за ним.
-Балансировщик нагрузки можно сделать высокодоступным,
-но обычно балансировщики нагрузки образуют централизо-
-ванные узкие места в инфраструктуре приложений;
-- объединение служб в единый кластер с балансировщиками нагрузки
-ограничивает возможность горизонтального масштабирования на
-нескольких серверах. Многие коммерческие балансировщики на-
-грузки накладывают два ограничения: модель избыточности
-и стоимость лицензирования.
+- даже притом что балансировщик нагрузки можно сделать высокодоступным, он образует единственную точку отказа для всей инфраструктуры. Если балансировщик нагрузки отключится, то вместе с ним отключатся все приложения, находящиеся за ним. Балансировщик нагрузки можно сделать высокодоступным, но обычно балансировщики нагрузки образуют централизованные узкие места в инфраструктуре приложений;
+- объединение служб в единый кластер с балансировщиками нагрузки ограничивает возможность горизонтального масштабирования на нескольких серверах. Многие коммерческие балансировщики нагрузки накладывают два ограничения: модель избыточности и стоимость лицензирования.
 
-- большинство традиционных балансировщиков нагрузки управляет-
-ся статически. Они не предназначены для быстрой регистра-
-ции и дерегистрации служб. Традиционные балансировщики нагрузки используют централизованную базу данных для хра-
-нения маршрутов и правил, и часто единственный способ до-
-бавить новые маршруты – использовать проприетарный API
-производителя;
-- балансировщик нагрузки действует подобно прокси-серверу для служб,
-поэтому запросы клиентов должны отображаться в физические
-службы. Этот дополнительный уровень трансляции увеличи-
-вает общую сложность инфраструктуры служб, потому что
-правила трансляции должны определяться и развертываться
-вручную. Кроме того, традиционный сценарий балансировки
-нагрузки не предусматривает регистрацию новых экземпля-
-ров службы при их запуске.
+- большинство традиционных балансировщиков нагрузки управляется статически. Они не предназначены для быстрой регистрации и дерегистрации служб. Традиционные балансировщики нагрузки используют централизованную базу данных для хранения маршрутов и правил, и часто единственный способ добавить новые маршруты – использовать проприетарный API производителя;
+- балансировщик нагрузки действует подобно прокси-серверу для служб, поэтому запросы клиентов должны отображаться в физические службы. Этот дополнительный уровень трансляции увеличивает общую сложность инфраструктуры служб, потому что правила трансляции должны определяться и развертываться вручную. Кроме того, традиционный сценарий балансировки нагрузки не предусматривает регистрацию новых экземпляров службы при их запуске.
+
+##### Вызов служб
+###### Spring Discovery Client
+
+Клиент Spring Discovery предлагает самый низкий уровень абстрак-
+ции доступа к балансировщику нагрузки и зарегистрированным
+в нем службам. С его помощью можно извлекать все службы, заре-
+гистрированные в клиенте Spring Cloud Load Balancer, и их URL.
+
+`@EnableDiscoveryClient` - включает в поддержку библиотек Discovery
+Client и Spring Cloud Load Balancer.
+
+```java
+@Component
+public class OrganizationDiscoveryClient {
+
+	@Autowired
+	private DiscoveryClient discoveryClient;
+	
+	public Organization getOrganization(String organizationId) {
+		RestTemplate restTemplate = new RestTemplate();
+		List<ServiceInstance> instances =
+				discoveryClient.getInstances("organization-service");
+		if (instances.size()==0) return null;
+		String serviceUri = String.format ("%s/v1/organization/%s",
+			instances.get(0).getUri().toString(),
+			organizationId);
+		ResponseEntity<Organization> restExchange =
+			restTemplate.exchange(
+				serviceUri, HttpMethod.GET,
+				null, Organization.class, organizationId);
+		return restExchange.getBody();
+	}
+}
+```
+
+Первый интересный момент, который хотелось бы отметить, – класс DiscoveryClient. Он используется для взаимодействий с балансировщиком Spring Cloud Load Balancer. Далее, чтобы получить все экземпляры службы организаций, зарегистрированные в Eureka, вызывается метод getInstances() с ключом искомой службы, который возвращает список объектов ServiceInstance. Каждый объект ServiceInstance содержит информацию о конкретном экземпляре службы, включая имя хоста, порт и URI.
+
+- не использует преимущества балансировки нагрузки на стороне клиента. Вызывая Discovery Client напрямую, вы получаете список служб и должны сами решить, какой экземпляр вызывать;
+- делает слишком много работы. Код должен создать URL, чтобы вызвать службу. Это мелочь, но, избавляясь от таких фрагментов кода, вы уменьшаете объем кода, который придется отлаживать.
+
+###### Rest Template
+
+```java
+@LoadBalanced
+@Bean
+public RestTemplate getRestTemplate(){
+	return new RestTemplate();
+}
+```
+
+Использование класса RestTemplate во многом похоже на исполь-
+зование стандартного класса RestTemplate, за исключением одного
+небольшого отличия, заключающегося в определении URL целе-
+вой службы. Вместо физического местоположения службы в вы-
+зове RestTemplate нужно использовать целевой URL, полученный
+из идентификатора вызываемой службы, под которым она зареги-
+стрирована в службе Eureka
+
+###### Open Feign
+
+Свой декодер ошибок в Feign клиенте:
+
+```java
+public class StashErrorDecoder implements ErrorDecoder {
+
+    @Override
+    public Exception decode(String methodKey, Response response) {
+        if (response.status() >= 400 && response.status() <= 499) {
+            return new StashClientException(
+                    response.status(),
+                    response.reason()
+            );
+        }
+        if (response.status() >= 500 && response.status() <= 599) {
+            return new StashServerException(
+                    response.status(),
+                    response.reason()
+            );
+        }
+        return errorStatus(methodKey, response);
+    }
+}
+```
+
+Which you can then provide in your `Feign.builder()` like so:
+
+```java
+return Feign.builder()
+                .errorDecoder(new StashErrorDecoder())
+                .target(StashApi.class, url);
+```
+
+##### Итоги
+
+Для абстрагирования физического местоположения служб ис-
+пользуется шаблон обнаружения служб.
+ Механизм обнаружения служб, такой как Eureka, способен до-
+бавлять и удалять экземпляры служб из окружения, не влияя
+на работу их клиентов.
+ Балансировка нагрузки на стороне клиента может обеспечить
+дополнительную производительность и устойчивость за счет ке-
+ширования физического местоположения экземпляров службы.
+ Eureka – это проект компании Netflix, который легко устанав-
+ливается и настраивается с использованием Spring Cloud.
+ Для вызова служб можно использовать три разных механиз-
+ма Spring Cloud и Netflix Eureka: Spring Cloud Discovery Client,
+RestTemplate с поддержкой Spring Cloud Load Balancer и клиен-
+та Feign Netflix.
+### Шаблоны отказоустойчивости
+
+##### Шаблоны устойчивости на стороне клиента
+
+Шаблоны программирования, обеспечивающие устойчивость на сто-
+роне клиента, сосредоточены на защите клиента от сбоя, когда удален-
+ный ресурс выходит из строя из-за ошибок или страдает низкой произ-
+водительностью. Эти шаблоны позволяют клиенту быстро потерпеть
+неудачу и не расходовать понапрасну ценные ресурсы, такие как соеди-
+нения с базой данных и пулы потоков выполнения. Они также помога-
+ют предотвратить распространение проблемы «вверх по течению» –
+на компоненты, использующие данного клиента.
+
+![](_Res/patterns_fault_tolerance_client_side.png)
+
+###### Балансировка нагрузки на стороне клиента
+Мы уже познакомились с шаблоном балансировки нагрузки на сто-
+роне клиента в предыдущей главе, когда говорили об обнаружении
+служб. Балансировка нагрузки на стороне клиента включает поиск
+клиентом всех отдельных экземпляров службы с помощью агента
+обнаружения (например, Netflix Eureka) и кеширование их физи-
+ческих адресов.
+Когда потребителю службы требуется вызвать экземпляр служ-
+бы, то подсистема балансировки нагрузки на стороне клиента воз-
+вращает адрес из пула. Балансировщик нагрузки на стороне кли-
+ента находится между клиентом и службой, поэтому может опре-
+делить, работает ли экземпляр службы и насколько правильно он
+работает. Обнаружив проблему, балансировщик нагрузки на сторо-
+не клиента может удалить этот экземпляр службы из пула и предот-
+вратить повторное обращение к нему в будущем.
+
+###### Размыкатель цепи
+Шаблон размыкателя цепи (circuit breaker) действует подобно
+автоматическому выключателю в электрической цепи, который
+размыкает цепь, если обнаруживает, что через нее течет слишком
+большой ток. Обнаружив проблему, размыкатель цепи разрывает
+соединение с остальной электрической цепью и не позволяет «под-
+жарить» потребителей электроэнергии, расположенных за ним.
+Программный размыкатель цепи наблюдает за отдельными вы-
+зовами удаленных служб. Если вызов длится слишком долго, размы-
+катель вмешивается и прерывает его. Также шаблон размыкателя
+цепи наблюдает за всеми вызовами к удаленным ресурсам, и если
+количество неудачных вызовов к определенному ресурсу, следую-
+щих подряд, превысит некоторый порог, то реализация шаблона
+«сработает», заставит клиента быстро потерпеть неудачу и предот-
+вратит вызовы отказавшего ресурса в будущем.
+###### Резервная реализация
+
+В шаблоне отката к резервной реализации (fallback), когда вызов
+удаленной службы завершается неудачей, вместо возбуждения ис-
+ключения потребитель использует альтернативную реализацию
+и пытается выполнить запрошенное действие другими способами.
+Обычно это предусматривает поиск в других источниках данных
+или постановку запроса в очередь для последующей обработки.
+В ответе, возвращаемом пользователю, не сообщается о возник-
+шем исключении, но его можно уведомить о том, что ответ на за-
+прос следует проверить позже.
+Например, представьте сайт электронной коммерции, анали-
+зирующий поведение пользователей и возвращающий рекомен-
+дации по другим товарам, которые они могут пожелать купить.
+Как правило, для получения результатов анализа поведения поль-
+зователя в прошлом и списка рекомендаций для каждого конкрет-
+ного пользователя вызывается микросервис. Однако если служба
+анализа предпочтений недоступна, то резервным вариантом мо-
+жет быть получение более общего списка предпочтений, осно-
+ванного на всех покупках всех пользователей. Эти данные могут
+предоставляться совершенно другой службой и из другого источ-
+ника данных.
+
+###### Герметичные отсеки
+Шаблон герметичных отсеков (bulkheads) заимствован из прак-
+тики постройки кораблей. Корабль делится на отсеки водонепро-
+ницаемыми и герметичными переборками. Даже если в корпусе
+корабля
+образуется пробоина, переборки удержат воду в том отсе-
+ке, где находится пробоина, и не дадут всему кораблю наполниться
+водой и затонуть.
+Ту же идею можно применить к службе, которая должна взаимо-
+действовать с несколькими удаленными ресурсами. При использо-
+вании шаблона герметичных отсеков вызовы удаленных ресурсов
+«герметизируются» в отдельных пулах потоков, благодаря чему
+уменьшается риск того, что проблема с вызовом одного медленно-
+го удаленного ресурса приведет к остановке всего приложения.
+
+##### Реализация с Resilience4j
+
+Resilience4j – это библиотека реализаций шаблонов отказоустой-
+чивости, созданная по образу и подобию Hystrix. Она предлагает
+следующие шаблоны для использования в наших службах:
+
+###### Размыкатель цепи (circuit breaker) – прекращает отправку запросов при сбое вызываемой службы;
+
+```java
+@CircuitBreaker(name = "organizationService")
+private Organization getOrganization(String organizationId) {
+	return organizationRestClient.getOrganization(organizationId);
+}
+```
+
+```yaml
+resilience4j.circuitbreaker:
+	instances:
+	licenseService:
+		registerHealthIndicator: true
+		ringBufferSizeInClosedState: 5
+		ringBufferSizeInHalfOpenState: 3
+		waitDurationInOpenState: 10s
+		failureRateThreshold: 50
+		recordExceptions:
+			- org.springframework.web.client.HttpServerErrorException
+			- java.io.IOException
+			- java.util.concurrent.TimeoutException
+			- org.springframework.web.client.ResourceAccessException
+	organizationService:
+		registerHealthIndicator: true
+		ringBufferSizeInClosedState: 6
+		ringBufferSizeInHalfOpenState: 4
+		waitDurationInOpenState: 20s
+		failureRateThreshold: 60
+```
+
+- ringBufferSizeInClosedState – определяет размер кольцевого битового буфера для замкнутого состояния размыкателя. Значение по умолчанию – 100;
+- ringBufferSizeInHalfOpenState – определяет размер кольцевого битового буфера для полуоткрытого состояния размыкателя. Значение по умолчанию – 10;
+- waitDurationInOpenState – время, которое размыкатель должен ждать перед переходом из разомкнутого состояния в полуоткрытое. Значение по умолчанию – 60 000 мс;
+- failureRateThreshold – порог частоты отказов в процентах. Когда частота отказов оказывается больше или равна этому порогу, размыкатель переходит в разомкнутое состояние и начинает отвергать вызовы. Значение по умолчанию – 50;
+- recordExceptions – список исключений, которые будут считаться сбоями. По умолчанию сбоями считаются все исключения.
+
+###### Повторные попытки (retry) – повторяет попытки обратиться к службе, что позволяет определить момент, когда та восстановит работоспособность
+
+```yaml
+resilience4j.retry:
+	instances:
+		retryLicenseService:
+		maxRetryAttempts: 5
+		waitDuration: 10000
+		retry-exceptions:
+			- java.util.concurrent.TimeoutException
+```
+
+```java
+@Retry(name = "retryLicenseService",
+fallbackMethod="buildFallbackLicenseList")
+public List<License> getLicensesByOrganization(String organizationId)
+	throws TimeoutException {
+	logger.debug("getLicensesByOrganization Correlation id: {}",
+	UserContextHolder.getContext().getCorrelationId());
+	randomlyRunLong();
+	return licenseRepository.findByOrganizationId(organizationId);
+}
+```
+###### Герметичные отсеки (bulkhead) – ограничивает количество конкурирующих исходящих запросов, чтобы избежать перегрузки;
+
+Шаблон герметичных отсеков разделяет вызовы удаленных ре-
+сурсов по отдельным пулам потоков, чтобы изолировать одну не-
+корректно работающую службу и не обрушить весь контейнер. Би-
+блиотека Resilience4j предоставляет две реализации шаблона гер-
+метичных отсеков, которые можно использовать для ограничения
+количества одновременно выполняющихся запросов:
+
+= изоляцию с использованием семафоров – ограничивает количество одновременно выполняющихся запросов к службе. По достижении предела эта реализация начинает отклонять запросы;
+= изоляцию с использованием пула потоков – ограничивает очередь и размер пула потоков. Эта реализация отклоняет запросы только по заполнении пула и очереди.
+
+По умолчанию Resilience4j применяет изоляцию с использованием семафоров.
+
+Эта модель отлично работает в случаях, когда имеется неболь-
+шое количество удаленных ресурсов или служб и вызовы к ним (от-
+носительно) равномерно распределены во времени. Однако если
+среди этих ресурсов или служб есть такие, которые вызываются
+намного чаще или обрабатывают запросы намного дольше других,
+то есть риск исчерпать пул потоков, потому что одна служба будет
+преобладать перед другими и в какой-то момент для работы с ней
+будут задействованы все потоки в пуле.
+
+К счастью, Resilience4j предлагает простой механизм разделе-
+ния вызовов различных удаленных ресурсов с использованием
+пулов потоков.
 
 
+```yaml
+resilience4j.bulkhead:
+	instances:
+		bulkheadLicenseService:
+		maxWaitDuration: 10ms
+		maxConcurrentCalls: 20
+resilience4j.thread-pool-bulkhead:
+	instances:
+		bulkheadLicenseService:
+		maxThreadPoolSize: 1
+		coreThreadPoolSize: 1
+		queueCapacity: 1
+		keepAliveDuration: 20ms
+```
+
+```java
+@Bulkhead(name= "bulkheadLicenseService", fallbackMethod= "buildFallbackLicenseList")
+public List<License> getLicensesByOrganization(
+	String organizationId) throws TimeoutException {
+	logger.debug("getLicensesByOrganization Correlation id: {}",
+	UserContextHolder.getContext().getCorrelationId());
+	randomlyRunLong();
+	return licenseRepository.findByOrganizationId(organizationId);
+}
+```
+
+В данном случае используется изоляция на основе семафоров. Чтобы выбрать реализацию с использованием пулов потоков, нужно добавить в аннотацию @Bulkhead параметр type, как показано ниже:
+
+```java
+@Bulkhead(name = "bulkheadLicenseService", type = Bulkhead.Type.THREADPOOL,
+	➥ fallbackMethod = "buildFallbackLicenseList")
+```
+###### Ограничитель частоты (rate limit) – ограничивает количество принимаемых вызовов
+
+```yaml
+resilience4j.ratelimiter:
+	instances:
+		licenseService:
+			timeoutDuration: 1000ms
+			limitRefreshPeriod: 5000
+			limitForPeriod: 5
+```
+
+```java
+@CircuitBreaker(name= "licenseService",
+fallbackMethod= "buildFallbackLicenseList")
+@RateLimiter(name = "licenseService",
+fallbackMethod = "buildFallbackLicenseList")
+@Retry(name = "retryLicenseService",
+fallbackMethod = "buildFallbackLicenseList")
+@Bulkhead(name= "bulkheadLicenseService",
+fallbackMethod= "buildFallbackLicenseList")
+public List<License> getLicensesByOrganization(String organizationId)
+	throws TimeoutException {
+	logger.debug("getLicensesByOrganization Correlation id: {}",
+	UserContextHolder.getContext().getCorrelationId());
+	randomlyRunLong();
+	return licenseRepository.findByOrganizationId(organizationId);
+}
+```
+
+Основное различие между шаблонами герметичных отсеков и ограничителя частоты заключается в том, что шаблон герметичных отсеков ограничивает количество одновременных вызовов (т. е. позволяет выполнять одновременно не более X вызовов), тогда как шаблон ограничителя частоты ограничивает общее количество вызовов в заданный период времени (т. е. позволяет выполнять X вызовов каждые Y с).
+###### Откат к резервной реализации (fallback) – устанавливает альтернативные пути выполнения на случай сбоя запросов.
+
+```java
+@CircuitBreaker(name= "licenseService", fallbackMethod= "buildFallbackLicenseList")
+public List<License> getLicensesByOrganization(
+	String organizationId) throws TimeoutException {
+	logger.debug("getLicensesByOrganization Correlation id: {}",
+	UserContextHolder.getContext().getCorrelationId());
+	randomlyRunLong();
+	return licenseRepository.findByOrganizationId(organizationId);
+}
+
+private List<License> buildFallbackLicenseList(String organizationId, Throwable t){
+	List<License> fallbackList = new ArrayList<>();
+	License license = new License();
+	license.setLicenseId("0000000-00-00000");
+	license.setOrganizationId(organizationId);
+	license.setProductName(
+	"Sorry no licensing information currently available");
+	fallbackList.add(license);
+	return fallbackList;
+}
+```
 
 
+Resilience4j позволяет применить сразу несколько шаблонов к одному и тому же вызову метода, для чего достаточно снабдить этот метод аннотациями. Например, чтобы ограничить количество исходящих вызовов с помощью шаблонов герметичных отсеков и размыкателя цепи, достаточно декорировать метод аннотациями @CircuitBreaker и @Bulkhead. Важно отметить, что шаблон повторных попыток Retry из Resilience4j должен применяться в сле-
+дующем порядке:
+	Retry ( CircuitBreaker ( RateLimiter ( TimeLimiter ( Bulkhead ( Function ) )
+➥ ) ) )
 
+###### ThreadLocal и Resilience4j
+
+```java
+@Component
+public class UserContextFilter implements Filter {
+	private static final Logger logger =
+	LoggerFactory.getLogger(UserContextFilter.class);
+	
+	@Override
+	public void doFilter(ServletRequest servletRequest,
+		ServletResponse servletResponse, FilterChain filterChain)
+		throws IOException, ServletException {
+		HttpServletRequest httpServletRequest =
+			(HttpServletRequest) servletRequest;
+		UserContextHolder.getContext().setCorrelationId(
+			httpServletRequest.getHeader(UserContext.CORRELATION_ID));
+		UserContextHolder.getContext().setUserId(httpServletRequest.getHeader(
+			UserContext.USER_ID));
+		UserContextHolder.getContext().setAuthToken(
+			httpServletRequest.getHeader(UserContext.AUTH_TOKEN));
+		UserContextHolder.getContext().setOrganizationId(
+			httpServletRequest.getHeader(UserContext.ORGANIZATION_ID));
+		filterChain.doFilter(httpServletRequest, servletResponse);
+	}
+	...
+	// остальная часть файла UserContextFilter.java опущена для краткости
+}
+```
+
+```java
+public class UserContextHolder {
+	private static final ThreadLocal<UserContext> userContext = new ThreadLocal<UserContext>();
+	
+	public static final UserContext getContext(){
+		UserContext context = userContext.get();
+		if (context == null) {
+			context = createEmptyContext();
+			userContext.set(context);
+		}
+		return userContext.get();
+	}
+	
+	public static final void setContext(UserContext context) {
+		userContext.set(context);
+	}
+	
+	public static final UserContext createEmptyContext(){
+		return new UserContext();
+	}
+}
+```
 ## Examples
 
 ##### Keycloak docker-compose.yml
