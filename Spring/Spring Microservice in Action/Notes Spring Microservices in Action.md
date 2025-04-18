@@ -204,6 +204,25 @@ Keycloak выделяет четыре основных компонента: з
 HTTP-команд, которые пользователь может применять для вызова
 конечных точек службы.
 
+###### Keycloak docker-compose.yml
+
+```java
+	keycloak:
+	image: jboss/keycloak
+	restart: always
+	environment:
+	    KEYCLOAK_USER: admin
+	    KEYCLOAK_PASSWORD: admin
+	ports:
+	    - "8180:8080"
+	networks:
+	    backend:
+	        aliases:
+	           - "keycloak"
+```
+
+##### OAuth2
+
 OAuth2 – это фреймворк безопасности на основе токенов, ко-
 торый предоставляет различные механизмы для защиты веб-
 служб. Эти механизмы называются грантами, или разрешения-
@@ -361,7 +380,6 @@ PUT, POST и DELETE). Моделируйте базовое поведение �
  беспорядочный рост виртуальных серверов или контейнеров;
  тип приложения;
  транзакции и согласованность данных.
-
 
 ###### Сложность распределенных систем
 Микросервисы по своей природе являются небольшими и рас-
@@ -971,26 +989,375 @@ public class UserContextHolder {
 	}
 }
 ```
-## Examples
 
-##### Keycloak docker-compose.yml
+### Spring Cloud Gateway
 
-```java
-	keycloak:
-	image: jboss/keycloak
-	restart: always
-	environment:
-	    KEYCLOAK_USER: admin
-	    KEYCLOAK_PASSWORD: admin
-	ports:
-	    - "8180:8080"
-	networks:
-	    backend:
-	        aliases:
-	           - "keycloak"
+###### Для чего нужен
+
+- статическая маршрутизация – сервисный шлюз принимает вызовы ко всем службам на одном URL и переадресует их конкретным микросервисам. Это упрощает разработку клиентов, потому что достаточно знать только одну конечную точку для обращения к любой нашей службе;
+- динамическая маршрутизация – сервисный шлюз может анализировать входящие запросы и на основе этого анализа выполнять интеллектуальную маршрутизацию. Например, вызовы клиентов, участвующих в программе бета-тестирования, могут направляться определенному кластеру служб, выполняющих другую версию кода, отличную от той, что используют все остальные;
+-  аутентификация и авторизация – поскольку все вызовы сначала поступают в сервисный шлюз, этот шлюз оказывается естественным местом для проверки подлинности клиентов, вызывающих службы;
+-  сбор метрик и журналирование – сервисный шлюз службы может использоваться для сбора метрик и журналирования проходящих через него вызовов. Также сервисный шлюз можно использовать для подтверждения наличия критически важной информации в пользовательских запросах и тем самым обеспечить единообразие журналирования. Это не означает, что можно не собирать метрики в отдельных службах – сервисный шлюз лишь помогает централизовать сбор основных метрик, таких как количество вызовов службы и время, потребовавшееся на обработку запроса.
+- отображение маршрутов ко всем службам в приложении в один URL. Однако Spring Cloud Gateway не ограничивается одним URL. Фактически с помощью этого фреймворка можно определить несколько точек входа и тем самым обеспечить максимально точное отображение маршрутов (для каждой точки входа определяются свои правила маршрутизации). Но первым и наиболее типичным вариантом использования фреймворка является создание единой точки входа, через которую будут проходить все вызовы служб;
+- создание фильтров для проверки запросов и ответов и выполнения необходимых действий по ее результатам. Поддержка фильтров позволяет внедрять точки принудительного применения политик в наш код и последовательно выполнять широкий спектр действий со всеми вызовами служб. Иначе говоря, фильтры позволяют изменять входящие и исходящие HTTP запросы и ответы;
+- создание предикатов – объектов, которые позволяют проверять соответствие запросов некоторому набору условий перед их обработкой. Spring Cloud Gateway включает набор встроенных фабрик предикатов маршрутов.
+
+###### Обнаружение служб
+
+Чтобы увидеть маршруты, используемые сервером Gateway, можно обратиться к конечной точке actuator/gateway/routes сервера. Она вернет список всех маршрутов к нашим службам.
+
+Автоматическое обнаружение
+
+```yaml
+spring:
+	cloud:
+		gateway:
+			discovery.locator:
+				enabled: true
+				lowerCaseServiceId: true
+			routes:
+			- id: organization-service
+				uri: lb://organization-service
+				predicates:
+				- Path=/organization/**
+				filters:
+				- RewritePath=/organization/(?<path>.*), /$\{path}
 ```
 
-`docker-compose -f docker/docker-compose.yml up`
+Ручное определение маршрутов
+
+```yaml
+spring:
+	cloud:
+		gateway:
+			routes:
+			- id: organization-service
+				uri: lb://organization-service
+				predicates:
+				- Path=/organization/**
+				filters:
+				- RewritePath=/organization/(?<path>.*), /$\{path}
+```
+
+##### Предикаты
+
+###### Встроенные предикаты в Spring Cloud Gateway
+
+Before Принимает параметр с датой и временем и про-
+пускает только запросы, отправленные до этого
+момента времени
+Before=2020-03-11T...
+After Принимает параметр с датой и временем и про-
+пускает только запросы, отправленные после этого
+момента времени
+After=2020-03-11T...
+Between Принимает два параметра с датой и временем и про-
+пускает только запросы, отправленные между этими
+двумя моментами времени. Сравнение с первым
+параметром выполняется как «больше или равно»,
+а со вторым – «строго меньше»
+Between=2020-03-11T...,
+2020-04-11T...
+Header Принимает два параметра: имя заголовка и регу-
+лярное выражение. Пропускает только запросы,
+имеющие указанный заголовок со значением, со-
+впадающим с регулярным выражением
+Header=X-Request-Id, \d+
+Host Принимает параметр с шаблоном имени хоста в сти-
+ле Ant и с точкой в качестве разделителя. Пропуска-
+ет только запросы с заголовком Host, содержащим
+имя хоста, соответствующее шаблону
+`Host=**.example.com`
+Method Проверяет HTTP-метод Method=GET
+Path Проверяет соответствие запроса указанному шабло-
+ну пути
+Path=/organization/{id}
+Query Принимает два параметра: обязательное и дополни-
+тельное регулярные выражения. Пропускает только
+запросы, параметры которых соответствуют этим
+регулярным выражениям
+Query=id, 1
+Cookie Принимает два параметра: имя cookie и регулярное
+выражение. Пропускает только запросы с cookie,
+содержимое которых соответствует регулярному
+выражению
+Cookie=SessionID, abc
+RemoteAddr
+Принимает список IP-адресов и пропускает только
+запросы, адреса отправителей в которых соответ-
+ствуют списку
+RemoteAddr=192.168.3.5/24
+
+###### Встроенные фильтры в Spring Cloud Gateway
+
+AddRequestHeader Принимает два параметра и добавляет в запрос
+указанный заголовок с указанным значением
+AddRequestHeader=
+X-Organization-ID,
+F39s2
+AddResponseHeader Принимает два параметра и добавляет в ответ
+указанный заголовок с указанным значением
+AddResponseHeader=
+X-Organization-ID,
+F39s2
+AddRequestParameter
+Принимает два параметра и добавляет параметр
+запроса с указанным именем и значением
+AddRequestParameter=
+Organizationid,
+F39s2
+PrefixPath Добавляет указанный префикс в путь HTTP-
+запроса
+PrefixPath=/api
+RequestRateLimiter
+Принимает три параметра: количество запросов
+в секунду, которое пользователь может отпра-
+вить; допустимое превышение заданного огра-
+ничения и имя bean-компонента, реализующего
+интерфейс KeyResolver
+RequestRateLimiter=
+10, 20,
+#{@userKeyResolver}
+RedirectTo Принимает два параметра – код состояния и URL.
+Код состояния должен относиться к диапазону
+кодов 300, определяющих переадресацию
+RedirectTo=302,
+http://localhost:
+8072
+RemoveNonProxy Удаляет некоторые заголовки, такие как Keep-
+Alive, Proxy-Authenticate и Proxy-Authorization
+–
+RemoveRequest-
+Header
+Удаляет из запроса заголовки, соответствующие
+параметру
+RemoveRequest-
+Header=
+X-Request-Foo
+RemoveResponseHeader
+Удаляет из ответа заголовки, соответствующие
+параметру
+RemoveRespnseHeader=
+X-Organization-ID
+RewritePath Принимает путь, и регулярные выражения
+принимает параметр с шаблонами для замены
+запрошенного пути
+```
+RewritePath=
+/organization/
+(?<path>.*), /$\
+{path}
+```
+SecureHeaders Добавляет заголовки безопасности в ответ –
+SetPath Принимает параметр с шаблоном пути. Изменяет
+путь запроса, подставляя шаблонные сегменты.
+При этом используются шаблоны URI из окру-
+жения Spring. Допускается наличие нескольких
+совпадающих сегментов
+SetPath=
+/{organization}
+SetStatus Принимает допустимый код состояния HTTP и за-
+меняет им код состояния HTTP в ответе
+SetStatus=500
+SetResponseHeader Принимает имя и значение и добавляет заголо-
+вок с этими именем и значением в ответ
+SetResponseHeader=
+X-Response-ID,123
+
+- фильтр трассировки – это предварительный фильтр, который гарантирует наличие в каждом запросе, поступающий от шлюза, связанного с ним идентификатора корреляции. Идентификатор корреляции – это уникальный идентификатор, который передается всем микросервисам, участвующим в обработке запроса. Идентификатор корреляции позволяет проследить цепочку событий, происходящих при обработке запроса в последовательности микросервисов;
+- целевую службу – может быть службой организаций или службой лицензий. Обе службы получают идентификатор корреляции в заголовке HTTP-запроса;
+- фильтр ответа – это заключительный фильтр, который добавляет идентификатор корреляции, связанный с вызовом службы, в заголовок ответа HTTP, отправляемого клиенту. Благодаря этому клиент получает доступ к идентификатору корреляции, связанному с запросом.
+
+###### Идентификатор корреляции (Correlation ID)
+
+Уникальный идентификатор, который присваивается самому первому запросу, когда он входит в вашу систему (обычно на уровне API-шлюза). Этот идентификатор затем **передается** из одного сервиса в другой при каждом последующем вызове в рамках обработки этого же первоначального запроса.
+
+**tmx-correlation-id** — это просто **конкретное имя HTTP-заголовка**, которое авторы книги выбрали для хранения этого идентификатора корреляции в своих примерах. Префикс tmx- (или часто X-) используется по соглашению для обозначения нестандартных, пользовательских заголовков.
+
+**Основная цель tmx-correlation-id:** Позволить связать (скоррелировать) все записи в логах и трассировки вызовов, относящиеся к одной и той же транзакции пользователя, даже если они разбросаны по разным микросервисам. Это критически важно для отладки и мониторинга распределенных систем.
+
+1. **Вход в систему (Предварительный фильтр шлюза - Pre-Filter):**
+    - Запрос от клиента (например, из браузера) первым делом попадает в **Spring Cloud Gateway**.
+    - Здесь срабатывает **предварительный фильтр** (в книге он назван TrackingFilter)
+    - **Задача фильтра:** Проверить, есть ли во входящем запросе заголовок tmx-correlation-id.
+        - **Если заголовка нет:** Фильтр **генерирует** новый уникальный идентификатор (например, UUID) и **добавляет** заголовок tmx-correlation-id с этим значением в запрос.
+        - **Если заголовок уже есть** (например, его прислал другой внутренний сервис): Фильтр ничего не делает, просто пропускает запрос дальше с существующим ID.
+    - Далее шлюз направляет запрос (уже с tmx-correlation-id) в соответствующий микросервис (например, службу лицензий).
+
+```java
+@Order(1)
+@Component
+public class TrackingFilter implements GlobalFilter {
+	private static final Logger logger = LoggerFactory.getLogger(TrackingFilter.class);
+
+	@Autowired
+	FilterUtils filterUtils;
+	
+	@Override
+	public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
+		HttpHeaders requestHeaders =
+		exchange.getRequest().getHeaders();
+		if (isCorrelationIdPresent(requestHeaders)) {
+			logger.debug(
+			"tmx-correlation-id found in tracking filter: {}. ",
+			filterUtils.getCorrelationId(requestHeaders));
+		} else {
+			String correlationID = generateCorrelationId();
+			exchange = filterUtils.setCorrelationId(exchange,
+			correlationID);
+			logger.debug(
+			"tmx-correlation-id generated in tracking filter: {}.",
+			correlationID);
+		}
+		return chain.filter(exchange);
+	}
+		
+	private boolean isCorrelationIdPresent(HttpHeaders requestHeaders) {
+		if (filterUtils.getCorrelationId(requestHeaders) != null) {
+			return true;
+		} else {
+			return false;
+		}
+	}
+	private String generateCorrelationId() {
+		return java.util.UUID.randomUUID().toString();
+	}
+}
+```
+
+2. **Обработка в микросервисе (Фильтр Сервлетов и Контекст):**
+    - Когда запрос поступает в конкретный микросервис (например, службу лицензий), его перехватывает **фильтр сервлетов** (в книге - UserContextFilter)
+    - **Задача фильтра:** **Извлечь** значение заголовка tmx-correlation-id (а также, возможно, другие важные заголовки, как Authorization или user-id) из входящего HTTP-запроса.
+    - Извлеченные значения сохраняются в специальном объекте-контексте (в книге - UserContext), который помещается в хранилище, локальное для текущего потока обработки запроса (ThreadLocal, реализованный через UserContextHolder)
+    - **Зачем это нужно?** Чтобы идентификатор корреляции был доступен в любой точке кода внутри этого сервиса (в контроллерах, сервисных слоях, репозиториях) во время обработки именно этого запроса, без необходимости пробрасывать его вручную через параметры методов. Он "привязан" к текущему потоку.
+
+```java
+@Component
+public class UserContextFilter implements Filter {
+	private static final Logger logger =
+	LoggerFactory.getLogger(UserContextFilter.class);
+	@Override
+	public void doFilter(ServletRequest servletRequest,
+		ServletResponse servletResponse, FilterChain filterChain)
+		throws IOException, ServletException {
+		HttpServletRequest httpServletRequest =
+		(HttpServletRequest)servletRequest;
+		UserContextHolder.getContext()
+		.setCorrelationId(httpServletRequest.getHeader(UserContext.CORRELATION_ID) );
+		UserContextHolder.getContext().setUserId(
+			httpServletRequest.getHeader(UserContext.USER_ID));
+		UserContextHolder.getContext().setAuthToken(
+			httpServletRequest.getHeader(UserContext.AUTH_TOKEN));
+		UserContextHolder.getContext().setOrganizationId(
+			httpServletRequest.getHeader(UserContext.ORGANIZATION_ID));
+		logger.debug("UserContextFilter Correlation id: {}",
+		UserContextHolder.getContext().getCorrelationId());
+		
+		filterChain.doFilter(httpServletRequest, servletResponse);
+	}
+	// Пустые методы init и destroy опущены
+}
+```
+
+3. **Вызов следующего сервиса (Перехватчик RestTemplate - Interceptor):**
+    - Если текущий микросервис (например, служба лицензий) должен вызвать другой микросервис (например, службу организаций) с помощью RestTemplate (или другого HTTP-клиента).
+    - К RestTemplate добавляется специальный **перехватчик** (в книге - UserContextInterceptor.
+    - **Задача перехватчика:** Перед отправкой исходящего HTTP-запроса к другому сервису, он **извлекает** идентификатор корреляции из UserContextHolder (того самого ThreadLocal).
+    - Затем он **добавляет** заголовок tmx-correlation-id с этим значением в исходящий запрос.
+    - **Зачем это нужно?** Чтобы **пропагировать** (передать дальше) тот же самый идентификатор корреляции следующему сервису в цепочке вызовов.
+
+```java
+public class UserContextInterceptor implements
+ClientHttpRequestInterceptor {
+	private static final Logger logger =
+	LoggerFactory.getLogger(UserContextInterceptor.class);
+	@Override
+	public ClientHttpResponse intercept(
+		HttpRequest request, byte[] body,
+		ClientHttpRequestExecution execution) throws IOException {
+		HttpHeaders headers = request.getHeaders();
+		headers.add(UserContext.CORRELATION_ID,
+			UserContextHolder.getContext().getCorrelationId());
+		headers.add(UserContext.AUTH_TOKEN, 
+			UserContextHolder.getContext().getAuthToken());
+		return execution.execute(request, body);
+	}
+}
+```
+
+Добавление intercepter в RestTemplate
+
+```java
+@LoadBalanced
+@Bean
+public RestTemplate getRestTemplate(){
+	RestTemplate template = new RestTemplate();
+	List interceptors = template.getInterceptors();
+	if (interceptors==null){
+		template.setInterceptors(Collections.singletonList(
+		new UserContextInterceptor()));
+	}else{
+		interceptors.add(new UserContextInterceptor());
+		template.setInterceptors(interceptors);
+	}
+	return template;
+}
+```
+
+4. **Выход из системы (Заключительный фильтр шлюза - Post-Filter):**
+    - Когда целевой сервис обработал запрос и вернул ответ, этот ответ снова проходит через **Spring Cloud Gateway** перед отправкой конечному клиенту.
+    - Здесь срабатывает **заключительный фильтр** (в книге - ResponseFilter)
+    - **Задача фильтра:** **Извлечь** идентификатор корреляции, который был связан с этим запросом (либо сгенерирован на шаге 1, либо получен из входящего запроса). Обычно его можно взять из того же UserContext.
+    - Фильтр **добавляет** заголовок tmx-correlation-id в исходящий HTTP-ответ, отправляемый клиенту.
+    - **Зачем это нужно?** Чтобы клиент (или системы мониторинга) мог связать полученный ответ с исходным запросом, который он отправил.
+
+```java
+@Configuration
+public class ResponseFilter {
+	final Logger logger =LoggerFactory.getLogger(ResponseFilter.class);
+	@Autowired
+	FilterUtils filterUtils;
+	@Bean
+	public GlobalFilter postGlobalFilter() {
+		return (exchange, chain) -> {
+			return chain.filter(exchange).then(Mono.fromRunnable(() -> {
+			HttpHeaders requestHeaders = exchange.getRequest().getHeaders();
+			String correlationId = filterUtils.getCorrelationId(requestHeaders);
+			logger.debug(
+				"Adding the correlation id to the outbound headers. {}",
+				correlationId);
+			exchange.getResponse().getHeaders().
+				add(FilterUtils.CORRELATION_ID, correlationId);
+			logger.debug("Completing outgoing request
+				for {}.",
+				exchange.getRequest().getURI());
+				}));
+		};
+	}
+}
+```
+
+### Событийно-ориентированная архитектура и Spring Cloud Stream
+
+##### Кэш
+
+У нас может быть ситуация, когда мы поставили кэш в сервисе A, на получение данных из сервиса B, чтобы сократить не только поход в базу в сервисе B, но и поход по REST сервисом A в B.
+
+Проблемы который могут возникнут:
+
+- Если данные в сервисе B, обновятся, их нужно также отразить в A
+
+Решения:
+
+- Определить одно подключение к Redis, чтобы при обновление сервис также обновлял кэш сервиса B. Страдает связанность;
+- Написать эндпоинт в сервисе A, по которому B мог бы обновлять сервис B. Однако, если сервис А примет большую нагрузку от пользователей, сервис B также будет долго отрабатывать из-за дополнительного похода по рест. Страдает связанность, и возможно долгая обработка, также сервис А может упасть во время обновления на B;
+- Организовать публикацию в брокер при обновление данных в B. Когда сообщения публикуется, consumer сервиса A запулит изменения и обновит кэш сам, в своем темпе, без задержек на сервисе B.
+
+
+### Распределенная трассировка с использованием Spring Cloud Sleuth и Zipkin
+
+
+
 ## Connections
 
 ## Best Practices
