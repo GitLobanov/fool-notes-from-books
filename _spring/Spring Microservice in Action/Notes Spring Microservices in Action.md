@@ -1370,7 +1370,7 @@ public class ResponseFilter {
 
 ## Diagrams
 
-![total-tech-in-book](total-tech-in-book.png)
+![total-tech-in-book](_Res/total-tech-in-book.png)
 Рис. Общая структура сервисов и технологий, которые используются в книге
 ## Resources
 
